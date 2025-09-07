@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ESP32 LED Remote</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:24px}
+    .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#d33;margin-right:8px}
+    .dot.on{background:#2a2}
+  </style>
+</head>
+<body>
+  <h2>ESP32 LED Remote</h2>
+  <div>
+    Broker status: <span id="broker">—</span>
+  </div>
+  <div style="margin-top:12px">
+    Device ID: <input id="device" placeholder="esp id (MAC)" style="width:220px" />
+    <button id="watch">Watch</button>
+  </div>
+
+  <div style="margin-top:16px">
+    <div><span id="stateDot" class="dot"></span>State: <strong id="state">?</strong></div>
+    <button id="onBtn">Turn ON</button>
+    <button id="offBtn">Turn OFF</button>
+    <button id="toggleBtn">Toggle</button>
+  </div>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    // set your broker websocket URL here
+    const BROKER_WS = 'ws://broker.hivemq.com:8000/mqtt'; // public test broker (insecure)
+    let client = null;
+    let device = '';
+
+    function setBrokerStatus(s){ document.getElementById('broker').textContent = s; }
+
+    function connectBroker() {
+      setBrokerStatus('connecting');
+      client = mqtt.connect(BROKER_WS);
+      client.on('connect', () => setBrokerStatus('connected'));
+      client.on('reconnect', () => setBrokerStatus('reconnecting'));
+      client.on('error', (e) => {
+        setBrokerStatus('error ' + e.toString());
+        console.error(e);
+      });
+      client.on('close', () => setBrokerStatus('closed'));
+      client.on('message', (topic, payload) => {
+        const p = payload.toString();
+        if (topic === `maq/led/${device}/state`) {
+          document.getElementById('state').textContent = p;
+          document.getElementById('stateDot').classList.toggle('on', p === 'ON');
+        }
+      });
+    }
+
+    document.getElementById('watch').onclick = () => {
+      device = document.getElementById('device').value.trim();
+      if (!device) { alert('enter device id (MAC from serial log)'); return; }
+      if (!client) connectBroker();
+      const stateTopic = `maq/led/${device}/state`;
+      const setTopic = `maq/led/${device}/set`;
+      client.subscribe(stateTopic);
+      // get retained state by publishing nothing; subscribing will fetch retained state
+      // attach buttons
+      document.getElementById('onBtn').onclick = () => client.publish(setTopic, 'ON');
+      document.getElementById('offBtn').onclick = () => client.publish(setTopic, 'OFF');
+      document.getElementById('toggleBtn').onclick = () => client.publish(setTopic, 'TOGGLE');
+    };
+  </script>
+</body>
+</html>
+
