@@ -1,72 +1,253 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>ESP32 LED Remote</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ESP32 LED Remote (MQTT)</title>
   <style>
-    body{font-family:system-ui,Arial;margin:24px}
-    .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#d33;margin-right:8px}
-    .dot.on{background:#2a2}
+    :root{--bg:#0b1222;--card:#0f172a;--accent:#22d3ee;--muted:#9ca3af;--text:#e6eef7}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:linear-gradient(180deg,#031026,#05102a);color:var(--text);min-height:100vh;display:grid;place-items:center;padding:20px}
+    .card{width:100%;max-width:720px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:12px;padding:18px;box-shadow:0 8px 30px rgba(2,6,23,.6)}
+    h1{margin:0 0 8px;font-size:20px}
+    .muted{color:var(--muted);font-size:13px;margin-bottom:12px}
+    .row{display:flex;gap:8px;align-items:center}
+    input,select{background:#071225;border:1px solid rgba(255,255,255,0.06);color:var(--text);padding:8px;border-radius:8px;font-size:14px}
+    button{background:var(--accent);color:#001;border:0;padding:9px 12px;border-radius:8px;font-weight:700;cursor:pointer}
+    .dot{width:12px;height:12px;border-radius:50%;background:#c94;display:inline-block;margin-right:8px;box-shadow:0 2px 6px rgba(0,0,0,.6)}
+    .dot.on{background:#2ac27a}
+    .controls{margin-top:14px;display:flex;gap:10px}
+    .log{margin-top:14px;background:#061426;border-radius:8px;padding:10px;height:160px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#bcd}
+    label.small{font-size:12px;color:var(--muted);margin-bottom:6px;display:block}
+    .settings{margin-top:12px;border-top:1px solid rgba(255,255,255,0.03);padding-top:12px;display:grid;gap:8px}
+    .flex{display:flex;gap:8px}
+    .hint{font-size:12px;color:var(--muted);margin-top:10px}
+    footer{margin-top:12px;color:var(--muted);font-size:12px;text-align:center}
+    @media(max-width:520px){ .row{flex-direction:column; align-items:stretch} .controls{flex-direction:column} }
   </style>
 </head>
 <body>
-  <h2>ESP32 LED Remote</h2>
-  <div>
-    Broker status: <span id="broker">—</span>
-  </div>
-  <div style="margin-top:12px">
-    Device ID: <input id="device" placeholder="esp id (MAC)" style="width:220px" />
-    <button id="watch">Watch</button>
-  </div>
+  <div class="card" role="main">
+    <h1>ESP32 LED Remote (MQTT)</h1>
+    <div class="muted">Connects to an MQTT broker (WebSockets). Uses secure <code>wss://</code> by default for GitHub Pages compatibility.</div>
 
-  <div style="margin-top:16px">
-    <div><span id="stateDot" class="dot"></span>State: <strong id="state">?</strong></div>
-    <button id="onBtn">Turn ON</button>
-    <button id="offBtn">Turn OFF</button>
-    <button id="toggleBtn">Toggle</button>
+    <div class="row" style="margin-bottom:8px">
+      <span id="brokerDot" class="dot"></span>
+      Broker status: <strong id="brokerStatus" style="margin-left:8px">—</strong>
+    </div>
+
+    <div class="row">
+      <div style="flex:1">
+        <label class="small">Device ID (paste MAC from ESP32 serial)</label>
+        <input id="deviceId" placeholder="e.g. A1B2C3D4E5F6" />
+      </div>
+      <div style="width:120px">
+        <label class="small">Action</label>
+        <button id="watchBtn">Watch</button>
+      </div>
+    </div>
+
+    <div class="controls" style="align-items:center;margin-top:10px">
+      <div style="flex:1">
+        <div><span id="stateDot" class="dot"></span> State: <strong id="stateText">?</strong></div>
+      </div>
+      <div class="flex">
+        <button id="onBtn">Turn ON</button>
+        <button id="offBtn">Turn OFF</button>
+        <button id="toggleBtn">Toggle</button>
+      </div>
+    </div>
+
+    <div class="settings" aria-hidden="false">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <div style="flex:1">
+          <label class="small">Broker WebSocket URL</label>
+          <input id="brokerUrl" value="wss://broker.hivemq.com:8884/mqtt" />
+        </div>
+        <div style="width:160px">
+          <label class="small">Client ID (optional)</label>
+          <input id="clientId" placeholder="webclient-xxxx" />
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;">
+        <div style="flex:1">
+          <label class="small">Username (optional)</label>
+          <input id="user" placeholder="username (for secure brokers)" />
+        </div>
+        <div style="width:200px">
+          <label class="small">Password (optional)</label>
+          <input id="pass" type="password" placeholder="password" />
+        </div>
+      </div>
+
+      <div class="hint">If you're using HiveMQ Cloud or another secured broker, set the <strong>Broker WebSocket URL</strong> (wss://...), and optional username/password. For initial testing, the public HiveMQ test broker (default) is used.</div>
+    </div>
+
+    <div class="log" id="logArea" aria-live="polite"></div>
+
+    <footer>Tip: open browser developer console to see more verbose debug logs.</footer>
   </div>
 
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script>
-    // set your broker websocket URL here
-    const BROKER_WS = 'ws://broker.hivemq.com:8000/mqtt'; // public test broker (insecure)
+    // Elements
+    const brokerStatusEl = document.getElementById('brokerStatus');
+    const brokerDot = document.getElementById('brokerDot');
+    const stateText = document.getElementById('stateText');
+    const stateDot = document.getElementById('stateDot');
+    const logArea = document.getElementById('logArea');
+    const watchBtn = document.getElementById('watchBtn');
+    const onBtn = document.getElementById('onBtn');
+    const offBtn = document.getElementById('offBtn');
+    const toggleBtn = document.getElementById('toggleBtn');
+
+    const deviceIdInput = document.getElementById('deviceId');
+    const brokerUrlInput = document.getElementById('brokerUrl');
+    const clientIdInput = document.getElementById('clientId');
+    const userInput = document.getElementById('user');
+    const passInput = document.getElementById('pass');
+
+    // default
     let client = null;
-    let device = '';
+    let deviceId = '';
+    let stateTopic = '';
+    let setTopic = '';
 
-    function setBrokerStatus(s){ document.getElementById('broker').textContent = s; }
+    function log(...args){
+      const s = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      const time = new Date().toLocaleTimeString();
+      logArea.innerText = `[${time}] ${s}\n` + logArea.innerText;
+      console.log(...args);
+    }
 
-    function connectBroker() {
+    function setBrokerStatus(s, color=true){
+      brokerStatusEl.textContent = s;
+      brokerDot.classList.toggle('on', s === 'connected');
+      // small color hint (green when connected)
+    }
+
+    function safeClientId(){
+      const c = clientIdInput.value.trim();
+      if (c) return c;
+      return 'web-' + Math.random().toString(16).substr(2,8);
+    }
+
+    function connectBrokerIfNeeded(callback){
+      if (client && client.connected) {
+        callback && callback();
+        return;
+      }
+      const brokerUrl = brokerUrlInput.value.trim();
+      if (!brokerUrl) { alert('Broker URL required'); return; }
+
+      const opts = {
+        connectTimeout: 5000,
+        reconnectPeriod: 2000,
+        clientId: safeClientId(),
+        keepalive: 30
+      };
+      const user = userInput.value.trim();
+      const pass = passInput.value;
+      if (user) { opts.username = user; opts.password = pass; }
+
+      log('Connecting to broker', brokerUrl, 'clientId', opts.clientId);
       setBrokerStatus('connecting');
-      client = mqtt.connect(BROKER_WS);
-      client.on('connect', () => setBrokerStatus('connected'));
-      client.on('reconnect', () => setBrokerStatus('reconnecting'));
-      client.on('error', (e) => {
-        setBrokerStatus('error ' + e.toString());
-        console.error(e);
+      client = mqtt.connect(brokerUrl, opts);
+
+      client.on('connect', () => {
+        log('MQTT connected');
+        setBrokerStatus('connected');
+        callback && callback();
       });
-      client.on('close', () => setBrokerStatus('closed'));
+      client.on('reconnect', () => {
+        log('MQTT reconnecting');
+        setBrokerStatus('reconnecting');
+      });
+      client.on('close', () => {
+        log('MQTT closed');
+        setBrokerStatus('closed');
+      });
+      client.on('offline', () => {
+        log('MQTT offline');
+        setBrokerStatus('offline');
+      });
+      client.on('error', (err) => {
+        log('MQTT error:', err && err.toString ? err.toString() : err);
+        setBrokerStatus('error');
+      });
       client.on('message', (topic, payload) => {
-        const p = payload.toString();
-        if (topic === `maq/led/${device}/state`) {
-          document.getElementById('state').textContent = p;
-          document.getElementById('stateDot').classList.toggle('on', p === 'ON');
+        const p = (payload || '').toString();
+        log('Recv', topic, p);
+        if (topic === stateTopic) {
+          stateText.textContent = p;
+          stateDot.classList.toggle('on', p === 'ON');
         }
       });
     }
 
-    document.getElementById('watch').onclick = () => {
-      device = document.getElementById('device').value.trim();
-      if (!device) { alert('enter device id (MAC from serial log)'); return; }
-      if (!client) connectBroker();
-      const stateTopic = `maq/led/${device}/state`;
-      const setTopic = `maq/led/${device}/set`;
-      client.subscribe(stateTopic);
-      // get retained state by publishing nothing; subscribing will fetch retained state
-      // attach buttons
-      document.getElementById('onBtn').onclick = () => client.publish(setTopic, 'ON');
-      document.getElementById('offBtn').onclick = () => client.publish(setTopic, 'OFF');
-      document.getElementById('toggleBtn').onclick = () => client.publish(setTopic, 'TOGGLE');
-    };
+    function subscribeToDevice(did){
+      deviceId = did;
+      stateTopic = `maq/led/${deviceId}/state`;
+      setTopic = `maq/led/${deviceId}/set`;
+      if (!client || !client.connected) {
+        connectBrokerIfNeeded(() => {
+          client.subscribe(stateTopic, (err) => {
+            if (err) {
+              log('Subscribe error', err);
+              alert('Subscribe failed: ' + err);
+            } else {
+              log('Subscribed to', stateTopic, ' — retained state should arrive shortly');
+            }
+          });
+        });
+      } else {
+        client.subscribe(stateTopic, (err) => {
+          if (err) {
+            log('Subscribe error', err);
+            alert('Subscribe failed: ' + err);
+          } else {
+            log('Subscribed to', stateTopic, ' — retained state should arrive shortly');
+          }
+        });
+      }
+    }
+
+    watchBtn.addEventListener('click', () => {
+      const did = deviceIdInput.value.trim();
+      if (!did) { alert('Enter device ID (MAC printed in ESP32 serial)'); return; }
+      subscribeToDevice(did);
+    });
+
+    onBtn.addEventListener('click', () => {
+      if (!client || !client.connected) { log('Not connected to broker'); setBrokerStatus('closed'); return; }
+      client.publish(setTopic, 'ON');
+      log('Published', setTopic, '-> ON');
+    });
+    offBtn.addEventListener('click', () => {
+      if (!client || !client.connected) { log('Not connected to broker'); setBrokerStatus('closed'); return; }
+      client.publish(setTopic, 'OFF');
+      log('Published', setTopic, '-> OFF');
+    });
+    toggleBtn.addEventListener('click', () => {
+      if (!client || !client.connected) { log('Not connected to broker'); setBrokerStatus('closed'); return; }
+      client.publish(setTopic, 'TOGGLE');
+      log('Published', setTopic, '-> TOGGLE');
+    });
+
+    // Restore last used device + broker from localStorage
+    try {
+      const lastDevice = localStorage.getItem('esp_device');
+      const lastBroker = localStorage.getItem('esp_broker');
+      if (lastDevice) deviceIdInput.value = lastDevice;
+      if (lastBroker) brokerUrlInput.value = lastBroker;
+    } catch(e){/*ignore*/}
+
+    // Save settings when changed
+    brokerUrlInput.addEventListener('change', () => localStorage.setItem('esp_broker', brokerUrlInput.value));
+    deviceIdInput.addEventListener('change', () => localStorage.setItem('esp_device', deviceIdInput.value));
+
+    // Small helper: show console logs when page loads
+    log('UI ready. Enter Device ID and click Watch. Default broker:', brokerUrlInput.value);
   </script>
 </body>
 </html>
